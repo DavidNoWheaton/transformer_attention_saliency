@@ -424,6 +424,7 @@ class DecoderLayer(nn.Module):
     def forward(self, x, memory, src_mask, tgt_mask):
         "Follow Figure 1 (right) for connections."
         m = memory
+        
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
         x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
         return self.sublayer[2](x, self.feed_forward)
@@ -482,7 +483,7 @@ def example_mask():
     )
 
 
-show_example(example_mask)
+# show_example(example_mask)
 
 # %% [markdown] id="Qto_yg7BTsqG"
 # ### Attention
@@ -516,8 +517,10 @@ show_example(example_mask)
 # $$
 
 # %% id="qsoVxS5yTsqG"
-def attention(query, key, value, mask=None, dropout=None):
+def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=None, self_attention=1):
     "Compute 'Scaled Dot Product Attention'"
+    if verbose==1:
+        print('\n\n\n')
     d_k = query.size(-1)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
@@ -525,7 +528,24 @@ def attention(query, key, value, mask=None, dropout=None):
     p_attn = scores.softmax(dim=-1)
     if dropout is not None:
         p_attn = dropout(p_attn)
-    return torch.matmul(p_attn, value), p_attn
+    if mute_index is not None:
+        p_attn[:,:,:,mute_index]=0
+        if self_attention==1:
+            p_attn[:,:,mute_index,:]=0
+        
+    attention_matrix=torch.matmul(p_attn, value)
+    if verbose==1:
+        print('key:',query.shape)
+        print('key transpose:',key.transpose(-2, -1).shape)
+        print('query:',query.shape)
+        print('value:',value.shape)
+        print(scores.shape)
+        # print('scores:',torch.max(scores),torch.min(scores))
+        # print(scores[0,0,:,:])
+        # print(scores[0,0,:,:].shape)
+        print('p_attention:',p_attn.shape)
+        print('attention_matrix:',attention_matrix.shape)
+    return attention_matrix, p_attn
 
 
 # %% [markdown] id="jUkpwu8kTsqG"
@@ -587,7 +607,7 @@ def attention(query, key, value, mask=None, dropout=None):
 
 # %% id="D2LBMKCQTsqH"
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_model, dropout=0.1,verbose=0, mute_index=None, self_attention=1):
         "Take in model size and number of heads."
         super(MultiHeadedAttention, self).__init__()
         assert d_model % h == 0
@@ -597,6 +617,9 @@ class MultiHeadedAttention(nn.Module):
         self.linears = clones(nn.Linear(d_model, d_model), 4)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
+        self.verbose=verbose
+        self.mute_index=mute_index
+        self.self_attention=self_attention
 
     def forward(self, query, key, value, mask=None):
         "Implements Figure 2"
@@ -613,7 +636,7 @@ class MultiHeadedAttention(nn.Module):
 
         # 2) Apply attention on all the projected vectors in batch.
         x, self.attn = attention(
-            query, key, value, mask=mask, dropout=self.dropout
+            query, key, value, mask=mask, dropout=self.dropout,verbose=self.verbose, mute_index=self.mute_index, self_attention=self.self_attention
         )
 
         # 3) "Concat" using a view and apply a final linear.
@@ -801,7 +824,7 @@ def example_positional():
     )
 
 
-show_example(example_positional)
+# show_example(example_positional)
 
 
 # %% [markdown] id="g8rZNCrzTsqI"
@@ -820,16 +843,18 @@ show_example(example_positional)
 
 # %% id="mPe1ES0UTsqI"
 def make_model(
-    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1
+    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1, mute_index=None
 ):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
-    attn = MultiHeadedAttention(h, d_model)
+    encoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0,self_attention=1, mute_index=mute_index)
+    decoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=None,self_attention=1)
+    decoder_source_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=mute_index,self_attention=0)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
-        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
-        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
+        Encoder(EncoderLayer(d_model, c(encoder_self_attention), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(decoder_self_attention), c(decoder_source_attention), c(ff), dropout), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
         Generator(d_model, tgt_vocab),
@@ -882,7 +907,7 @@ def run_tests():
         inference_test()
 
 
-show_example(run_tests)
+# show_example(run_tests)
 
 
 # %% [markdown]
@@ -1124,7 +1149,7 @@ def example_learning_schedule():
     )
 
 
-example_learning_schedule()
+# example_learning_schedule()
 
 
 # %% [markdown] id="7T1uD15VTsqK"
@@ -1220,7 +1245,7 @@ def example_label_smoothing():
     )
 
 
-show_example(example_label_smoothing)
+# show_example(example_label_smoothing)
 
 
 # %% [markdown] id="CGM8J1veTsqK"
@@ -1258,7 +1283,7 @@ def penalization_visualization():
     )
 
 
-show_example(penalization_visualization)
+# show_example(penalization_visualization)
 
 
 # %% [markdown] id="67lUqeLXTsqK"
@@ -1318,6 +1343,9 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol):
             memory, src_mask, ys, subsequent_mask(ys.size(1)).type_as(src.data)
         )
         prob = model.generator(out[:, -1])
+        m=nn.Softmax(dim=1)
+        print('shape:',prob.shape)
+        print('prob: ',m(prob))
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
         ys = torch.cat(
@@ -1400,6 +1428,7 @@ def load_tokenizers():
 
     try:
         spacy_de = spacy.load("de_core_news_sm")
+        print('spacy_de:',spacy_de)
     except IOError:
         os.system("python -m spacy download de_core_news_sm")
         spacy_de = spacy.load("de_core_news_sm")
@@ -1466,12 +1495,11 @@ def load_vocab(spacy_de, spacy_en):
     print(len(vocab_tgt))
     return vocab_src, vocab_tgt
 
-
+#open code here
 if is_interactive_notebook():
     # global variables used later in the script
     spacy_de, spacy_en = show_example(load_tokenizers)
     vocab_src, vocab_tgt = show_example(load_vocab, args=[spacy_de, spacy_en])
-
 
 # %% [markdown] id="-l-TFwzfTsqL"
 #
@@ -1585,24 +1613,26 @@ def create_dataloaders(
         train_iter
     )  # DistributedSampler needs a dataset len()
     train_sampler = (
-        DistributedSampler(train_iter_map) if is_distributed else None
+        DistributedSampler(train_iter_map) if is_distributed else [1]
     )
     valid_iter_map = to_map_style_dataset(valid_iter)
     valid_sampler = (
-        DistributedSampler(valid_iter_map) if is_distributed else None
+        DistributedSampler(valid_iter_map) if is_distributed else [1]
     )
 
     train_dataloader = DataLoader(
         train_iter_map,
         batch_size=batch_size,
-        shuffle=(train_sampler is None),
+        # shuffle=(train_sampler is None),
+        shuffle=0,
         sampler=train_sampler,
         collate_fn=collate_fn,
     )
     valid_dataloader = DataLoader(
         valid_iter_map,
         batch_size=batch_size,
-        shuffle=(valid_sampler is None),
+        # shuffle=(valid_sampler is None),
+        shuffle=0,
         sampler=valid_sampler,
         collate_fn=collate_fn,
     )
@@ -1747,17 +1777,17 @@ def load_trained_model():
         "warmup": 3000,
         "file_prefix": "multi30k_model_",
     }
-    model_path = "multi30k_model_final.pt"
+    model_path = r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt"
     if not exists(model_path):
         train_model(vocab_src, vocab_tgt, spacy_de, spacy_en, config)
 
     model = make_model(len(vocab_src), len(vocab_tgt), N=6)
-    model.load_state_dict(torch.load("multi30k_model_final.pt"))
+    model.load_state_dict(torch.load(model_path))
     return model
 
 
-if is_interactive_notebook():
-    model = load_trained_model()
+# if is_interactive_notebook():
+#     model = load_trained_model()
 
 
 # %% [markdown] id="RZK_VjDPTsqN"
@@ -1799,9 +1829,9 @@ if is_interactive_notebook():
 # > details. To add this to the model simply do this:
 
 # %% id="tb3j3CYLTsqN" tags=[]
-if False:
-    model.src_embed[0].lut.weight = model.tgt_embeddings[0].lut.weight
-    model.generator.lut.weight = model.tgt_embed[0].lut.weight
+# if False:
+#     model.src_embed[0].lut.weight = model.tgt_embeddings[0].lut.weight
+#     model.generator.lut.weight = model.tgt_embed[0].lut.weight
 
 
 # %% [markdown] id="xDKJsSwRTsqN"
@@ -1867,10 +1897,11 @@ def check_outputs(
     n_examples=15,
     pad_idx=2,
     eos_string="</s>",
+    mute_index=None
 ):
     results = [()] * n_examples
     for idx in range(n_examples):
-        print("\nExample %d ========\n" % idx)
+        print("\nExample",mute_index,"========\n" )
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
         greedy_decode(model, rb.src, rb.src_mask, 64, 0)[0]
@@ -1881,14 +1912,17 @@ def check_outputs(
         tgt_tokens = [
             vocab_tgt.get_itos()[x] for x in rb.tgt[0] if x != pad_idx
         ]
-
+        if mute_index is not None:
+            print('changed ',src_tokens[mute_index])
+        else:
+            print('original')
         print(
             "Source Text (Input)        : "
-            + " ".join(src_tokens).replace("\n", "")
+            ,src_tokens
         )
         print(
             "Target Text (Ground Truth) : "
-            + " ".join(tgt_tokens).replace("\n", "")
+            ,tgt_tokens
         )
         model_out = greedy_decode(model, rb.src, rb.src_mask, 72, 0)[0]
         model_txt = (
@@ -1901,6 +1935,27 @@ def check_outputs(
         results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
     return results
 
+def run_model_iter(valid_dataloader,n_examples,mute_index=None):
+        print("Loading Trained Model ...")
+        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index)
+        model.load_state_dict(
+            torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
+        )
+        
+        print("Checking Model Outputs:")
+        example_data = check_outputs(
+            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index
+        )
+        return model, example_data
+    
+def get_n_source_tokens(valid_dataloader):
+    pad_idx=2
+    b = next(iter(valid_dataloader))
+    rb = Batch(b[0], b[1], pad_idx)
+    src_tokens = [
+        vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
+    ]
+    return len(src_tokens)
 
 def run_model_example(n_examples=5):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
@@ -1915,22 +1970,15 @@ def run_model_example(n_examples=5):
         batch_size=1,
         is_distributed=False,
     )
-
-    print("Loading Trained Model ...")
-
-    model = make_model(len(vocab_src), len(vocab_tgt), N=6)
-    model.load_state_dict(
-        torch.load("multi30k_model_final.pt", map_location=torch.device("cpu"))
-    )
-
-    print("Checking Model Outputs:")
-    example_data = check_outputs(
-        valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples
-    )
+    #this part
+    n_source_tokens=get_n_source_tokens(valid_dataloader)
+    model, example_data=run_model_iter(valid_dataloader,n_examples)
+    for mute_index in range(n_source_tokens):
+        model, example_data=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index)
     return model, example_data
 
-
-# execute_example(run_model_example)
+#open code here executes the inference
+execute_example(run_model_example,args=[1])
 
 
 # %% [markdown] id="0ZkkNTKLTsqO"
@@ -2053,7 +2101,7 @@ def viz_encoder_self():
     )
 
 
-show_example(viz_encoder_self)
+# show_example(viz_encoder_self)
 
 
 # %% [markdown]
@@ -2085,7 +2133,7 @@ def viz_decoder_self():
     )
 
 
-show_example(viz_decoder_self)
+# show_example(viz_decoder_self)
 
 
 # %% [markdown]
@@ -2117,7 +2165,7 @@ def viz_decoder_src():
     )
 
 
-show_example(viz_decoder_src)
+# show_example(viz_decoder_src)
 
 # %% [markdown] id="nSseuCcATsqO"
 # # Conclusion
