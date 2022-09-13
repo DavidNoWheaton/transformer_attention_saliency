@@ -523,15 +523,21 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
         print('\n\n\n')
     d_k = query.size(-1)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+        
+    if mute_index is not None:
+        delta=-1*torch.std(scores)
+        scores[:,:,:,mute_index]-=delta
+        if self_attention==1:
+            scores[:,:,mute_index,:]-=delta
+            
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
+        
     p_attn = scores.softmax(dim=-1)
+
     if dropout is not None:
         p_attn = dropout(p_attn)
-    if mute_index is not None:
-        p_attn[:,:,:,mute_index]=0
-        if self_attention==1:
-            p_attn[:,:,mute_index,:]=0
+
         
     attention_matrix=torch.matmul(p_attn, value)
     if verbose==1:
@@ -1372,6 +1378,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
                     prob_vector=orig_word_correct_prob.unsqueeze(0)
                 else:
                     prob_vector=torch.cat((prob_vector,orig_word_correct_prob.unsqueeze(0)))
+                    
 
     return ys, prob_vector
 
@@ -1634,12 +1641,14 @@ def create_dataloaders(
     train_iter_map = to_map_style_dataset(
         train_iter
     )  # DistributedSampler needs a dataset len()
+    
+    test_index=1
     train_sampler = (
-        DistributedSampler(train_iter_map) if is_distributed else [1]
+        DistributedSampler(train_iter_map) if is_distributed else [test_index]
     )
     valid_iter_map = to_map_style_dataset(valid_iter)
     valid_sampler = (
-        DistributedSampler(valid_iter_map) if is_distributed else [1]
+        DistributedSampler(valid_iter_map) if is_distributed else [test_index]
     )
 
     train_dataloader = DataLoader(
