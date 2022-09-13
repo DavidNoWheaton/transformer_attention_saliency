@@ -525,7 +525,7 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
         
     if mute_index is not None:
-        delta=-1*torch.std(scores)
+        delta=torch.std(scores)
         scores[:,:,:,mute_index]-=delta
         if self_attention==1:
             scores[:,:,mute_index,:]-=delta
