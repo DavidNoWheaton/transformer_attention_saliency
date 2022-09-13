@@ -1335,23 +1335,45 @@ class SimpleLossCompute:
 # %% [markdown] id="LFkWakplTsqL" tags=[]
 # > This code predicts a translation using greedy decoding for simplicity.
 # %% id="N2UOpnT3bIyU"
-def greedy_decode(model, src, src_mask, max_len, start_symbol):
+def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=None,orig_output=None):
     memory = model.encode(src, src_mask)
     ys = torch.zeros(1, 1).fill_(start_symbol).type_as(src.data)
+    found_end=0
     for i in range(max_len - 1):
+
         out = model.decode(
             memory, src_mask, ys, subsequent_mask(ys.size(1)).type_as(src.data)
         )
         prob = model.generator(out[:, -1])
         m=nn.Softmax(dim=1)
-        print('shape:',prob.shape)
-        print('prob: ',m(prob))
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
-        ys = torch.cat(
-            [ys, torch.zeros(1, 1).type_as(src.data).fill_(next_word)], dim=1
-        )
-    return ys
+        
+        
+        
+        if orig_output is None:
+            ys = torch.cat(
+                [ys, torch.zeros(1, 1).type_as(src.data).fill_(next_word)], dim=1
+            )
+            orig_word=next_word
+            orig_word_correct_prob=m(prob)[0][next_word]
+        else:
+            orig_word=orig_output[i+1]
+            orig_word_correct_prob=m(prob)[0][orig_word]            
+            ys = torch.cat(
+                [ys, torch.zeros(1, 1).type_as(src.data).fill_(orig_word)], dim=1
+            )
+            
+        if found_end==0:
+            if int(orig_word)==1:
+                found_end=1
+            else:
+                if i==0:
+                    prob_vector=orig_word_correct_prob.unsqueeze(0)
+                else:
+                    prob_vector=torch.cat((prob_vector,orig_word_correct_prob.unsqueeze(0)))
+
+    return ys, prob_vector
 
 
 # %% id="qgIZ2yEtdYwe" tags=[]
@@ -1897,14 +1919,15 @@ def check_outputs(
     n_examples=15,
     pad_idx=2,
     eos_string="</s>",
-    mute_index=None
+    mute_index=None,
+    orig_output=None
 ):
     results = [()] * n_examples
     for idx in range(n_examples):
         print("\nExample",mute_index,"========\n" )
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
-        greedy_decode(model, rb.src, rb.src_mask, 64, 0)[0]
+        greedy_decode(model, rb.src, rb.src_mask, 64, 0,orig_output=orig_output)[0]
 
         src_tokens = [
             vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
@@ -1924,7 +1947,8 @@ def check_outputs(
             "Target Text (Ground Truth) : "
             ,tgt_tokens
         )
-        model_out = greedy_decode(model, rb.src, rb.src_mask, 72, 0)[0]
+        model_out,prob_vector = greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output)
+        model_out=model_out[0]
         model_txt = (
             " ".join(
                 [vocab_tgt.get_itos()[x] for x in model_out if x != pad_idx]
@@ -1933,9 +1957,9 @@ def check_outputs(
         )
         print("Model Output               : " + model_txt.replace("\n", ""))
         results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
-    return results
+    return results, prob_vector
 
-def run_model_iter(valid_dataloader,n_examples,mute_index=None):
+def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None):
         print("Loading Trained Model ...")
         model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index)
         model.load_state_dict(
@@ -1943,10 +1967,10 @@ def run_model_iter(valid_dataloader,n_examples,mute_index=None):
         )
         
         print("Checking Model Outputs:")
-        example_data = check_outputs(
-            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index
+        example_data, prob_vector = check_outputs(
+            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output
         )
-        return model, example_data
+        return model, example_data, prob_vector
     
 def get_n_source_tokens(valid_dataloader):
     pad_idx=2
@@ -1956,6 +1980,19 @@ def get_n_source_tokens(valid_dataloader):
         vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
     ]
     return len(src_tokens)
+
+def get_word_list(valid_dataloader,vocab, target=1):
+    pad_idx=2
+    b = next(iter(valid_dataloader))
+    rb = Batch(b[0], b[1], pad_idx)
+    if target==0:
+        src_or_tgt=rb.src
+    else:
+        src_or_tgt=rb.tgt
+    tokens = [
+        vocab.get_itos()[x] for x in src_or_tgt[0] if x != pad_idx
+    ]
+    return tokens
 
 def run_model_example(n_examples=5):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
@@ -1972,9 +2009,32 @@ def run_model_example(n_examples=5):
     )
     #this part
     n_source_tokens=get_n_source_tokens(valid_dataloader)
-    model, example_data=run_model_iter(valid_dataloader,n_examples)
+    model, example_data, orig_prob_vector=run_model_iter(valid_dataloader,n_examples)
+    orig_output=example_data[0][3]
     for mute_index in range(n_source_tokens):
-        model, example_data=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index)
+        model, example_data, prob_vector=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output)
+        prob_diff_vector=prob_vector-orig_prob_vector
+        if mute_index==0:
+            prob_tensor=prob_diff_vector.unsqueeze(0)
+        else:
+            prob_tensor=torch.cat((prob_tensor,prob_diff_vector.unsqueeze(0)),dim=0)
+    
+    
+    source_words=get_word_list(valid_dataloader,vocab_src,target=0)
+    model_output_words=[]
+    for i in orig_output:
+        
+        append_word=vocab_tgt.get_itos()[int(i)]
+        model_output_words.append(append_word)
+        if append_word=='</s>':
+            break
+    #note the model_output_words doesn't predict the probability of a sentence start, which is why we shift the index by 1 here and in the print statement
+    for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
+        print()
+        for source_index, source_word in enumerate(source_words):
+        
+            print(source_word,':',model_output_word,':',float(prob_tensor[source_index][model_output_index-1]))
+    
     return model, example_data
 
 #open code here executes the inference
