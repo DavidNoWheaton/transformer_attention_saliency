@@ -546,9 +546,6 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
         print('query:',query.shape)
         print('value:',value.shape)
         print(scores.shape)
-        # print('scores:',torch.max(scores),torch.min(scores))
-        # print(scores[0,0,:,:])
-        # print(scores[0,0,:,:].shape)
         print('p_attention:',p_attn.shape)
         print('attention_matrix:',attention_matrix.shape)
     return attention_matrix, p_attn
@@ -1341,7 +1338,7 @@ class SimpleLossCompute:
 # %% [markdown] id="LFkWakplTsqL" tags=[]
 # > This code predicts a translation using greedy decoding for simplicity.
 # %% id="N2UOpnT3bIyU"
-def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=None,orig_output=None):
+def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=None,orig_output=None, vocab_embedding=None):
     memory = model.encode(src, src_mask)
     ys = torch.zeros(1, 1).fill_(start_symbol).type_as(src.data)
     found_end=0
@@ -1352,6 +1349,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
         )
         prob = model.generator(out[:, -1])
         m=nn.Softmax(dim=1)
+        prob_softmax=m(prob)
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
         
@@ -1362,10 +1360,10 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
                 [ys, torch.zeros(1, 1).type_as(src.data).fill_(next_word)], dim=1
             )
             orig_word=next_word
-            orig_word_correct_prob=m(prob)[0][next_word]
+            orig_word_correct_prob=prob_softmax[0][next_word]
         else:
             orig_word=orig_output[i+1]
-            orig_word_correct_prob=m(prob)[0][orig_word]            
+            orig_word_correct_prob=prob_softmax[0][orig_word]            
             ys = torch.cat(
                 [ys, torch.zeros(1, 1).type_as(src.data).fill_(orig_word)], dim=1
             )
@@ -1379,8 +1377,21 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
                 else:
                     prob_vector=torch.cat((prob_vector,orig_word_correct_prob.unsqueeze(0)))
                     
-
-    return ys, prob_vector
+            if vocab_embedding is not None:
+                weighted_embedding=probs_to_weighted_embedding(prob_softmax,vocab_embedding)
+                if i==0:
+                    weighted_embeddings=weighted_embedding.unsqueeze(0)
+                else:
+                    weighted_embeddings=torch.cat((weighted_embeddings,weighted_embedding.unsqueeze(0)))
+            else:
+                weighted_embeddings=None
+            
+            
+                    
+    if weighted_embeddings is not None:
+        print(weighted_embeddings.shape)
+        print(prob_vector.shape)
+    return ys, prob_vector, weighted_embeddings
 
 
 # %% id="qgIZ2yEtdYwe" tags=[]
@@ -1524,11 +1535,37 @@ def load_vocab(spacy_de, spacy_en):
     print(len(vocab_tgt))
     return vocab_src, vocab_tgt
 
+
+    
+
 #open code here
 if is_interactive_notebook():
     # global variables used later in the script
     spacy_de, spacy_en = show_example(load_tokenizers)
     vocab_src, vocab_tgt = show_example(load_vocab, args=[spacy_de, spacy_en])
+    
+def get_full_embedding_matrix(vocab,d_model=512):
+    embed=Embeddings(d_model, vocab)#.to('cuda')
+    x=torch.IntTensor(range(vocab))#.to('cuda')
+    
+    return(embed.forward(x))
+    
+
+def probs_to_weighted_embedding(probs,embeddings):
+    
+    probs=torch.transpose(probs,0,1)#.to('cuda')
+    
+    embeddings=normalize(embeddings)   
+    
+    weighted=probs*embeddings
+    
+    averaged=torch.sum(weighted,dim=0)
+    
+    return averaged
+    
+    
+    
+    
 
 # %% [markdown] id="-l-TFwzfTsqL"
 #
@@ -1931,6 +1968,8 @@ def check_outputs(
     mute_index=None,
     orig_output=None
 ):
+    vocab_embedding=get_full_embedding_matrix(len(vocab_tgt))
+
     results = [()] * n_examples
     for idx in range(n_examples):
         print("\nExample",mute_index,"========\n" )
@@ -1956,7 +1995,9 @@ def check_outputs(
             "Target Text (Ground Truth) : "
             ,tgt_tokens
         )
-        model_out,prob_vector = greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output)
+        model_out,prob_vector, weighted_embeddings = greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)
+        
+        
         model_out=model_out[0]
         model_txt = (
             " ".join(
@@ -1966,20 +2007,26 @@ def check_outputs(
         )
         print("Model Output               : " + model_txt.replace("\n", ""))
         results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
-    return results, prob_vector
+    return results, prob_vector, weighted_embeddings
 
 def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None):
         print("Loading Trained Model ...")
         model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index)
+        # model=model.to('cuda')
         model.load_state_dict(
             torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
         )
         
+
+        
         print("Checking Model Outputs:")
-        example_data, prob_vector = check_outputs(
+        example_data, prob_vector, weighted_embeddings = check_outputs(
             valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output
         )
-        return model, example_data, prob_vector
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        
+        return model, example_data, prob_vector, weighted_embeddings
     
 def get_n_source_tokens(valid_dataloader):
     pad_idx=2
@@ -2003,6 +2050,14 @@ def get_word_list(valid_dataloader,vocab, target=1):
     ]
     return tokens
 
+def normalize(A,dim=1):
+    A_min=A.min(dim=1, keepdim=True)[0]
+    A -= A_min
+    A_sum=torch.sum(A,dim=1, keepdim=True)
+    A /= A_sum
+    
+    return A
+
 def run_model_example(n_examples=5):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
 
@@ -2018,16 +2073,24 @@ def run_model_example(n_examples=5):
     )
     #this part
     n_source_tokens=get_n_source_tokens(valid_dataloader)
-    model, example_data, orig_prob_vector=run_model_iter(valid_dataloader,n_examples)
+    model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples)
+    orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
     orig_output=example_data[0][3]
     for mute_index in range(n_source_tokens):
-        model, example_data, prob_vector=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output)
+        model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output)
         prob_diff_vector=prob_vector-orig_prob_vector
         if mute_index==0:
             prob_tensor=prob_diff_vector.unsqueeze(0)
+            weighted_embedding_tensor=weighted_embeddings.unsqueeze(0)-orig_weighted_embeddings
+            print('weighted tensor: ',weighted_embedding_tensor.shape)
         else:
             prob_tensor=torch.cat((prob_tensor,prob_diff_vector.unsqueeze(0)),dim=0)
+            weighted_embedding_tensor=torch.cat((weighted_embedding_tensor,weighted_embeddings.unsqueeze(0)-orig_weighted_embeddings),dim=0)
+            print('weighted tensor: ',weighted_embedding_tensor.shape)
+            
+    difference_tensor=weighted_embedding_tensor#-orig_weighted_embeddings
     
+    distance_matrix=torch.squeeze(torch.linalg.norm(difference_tensor,dim=2))    
     
     source_words=get_word_list(valid_dataloader,vocab_src,target=0)
     model_output_words=[]
@@ -2037,12 +2100,20 @@ def run_model_example(n_examples=5):
         model_output_words.append(append_word)
         if append_word=='</s>':
             break
-    #note the model_output_words doesn't predict the probability of a sentence start, which is why we shift the index by 1 here and in the print statement
+        
     for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
         print()
         for source_index, source_word in enumerate(source_words):
         
-            print(source_word,':',model_output_word,':',float(prob_tensor[source_index][model_output_index-1]))
+            print(source_word,':',model_output_word,':',float(distance_matrix[source_index][model_output_index-1]))
+        
+        
+    #note the model_output_words doesn't predict the probability of a sentence start, which is why we shift the index by 1 here and in the print statement
+    # for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
+    #     print()
+    #     for source_index, source_word in enumerate(source_words):
+        
+    #         print(source_word,':',model_output_word,':',float(prob_tensor[source_index][model_output_index-1]))
     
     return model, example_data
 
