@@ -610,7 +610,7 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
 
 # %% id="D2LBMKCQTsqH"
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1,verbose=0, mute_index=None, self_attention=1):
+    def __init__(self, h, d_model, dropout=0,verbose=0, mute_index=None, self_attention=1):
         "Take in model size and number of heads."
         super(MultiHeadedAttention, self).__init__()
         assert d_model % h == 0
@@ -703,7 +703,7 @@ class MultiHeadedAttention(nn.Module):
 class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
 
-    def __init__(self, d_model, d_ff, dropout=0.1):
+    def __init__(self, d_model, d_ff, dropout=0):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = nn.Linear(d_model, d_ff)
         self.w_2 = nn.Linear(d_ff, d_model)
@@ -846,7 +846,7 @@ def example_positional():
 
 # %% id="mPe1ES0UTsqI"
 def make_model(
-    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1, mute_index=None
+    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0, mute_index=None
 ):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
@@ -1391,8 +1391,8 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
     if weighted_embeddings is not None:
         print(weighted_embeddings.shape)
         print(prob_vector.shape)
+        
     return ys, prob_vector, weighted_embeddings
-
 
 # %% id="qgIZ2yEtdYwe" tags=[]
 # Train the simple copy task.
@@ -1545,17 +1545,18 @@ if is_interactive_notebook():
     vocab_src, vocab_tgt = show_example(load_vocab, args=[spacy_de, spacy_en])
     
 def get_full_embedding_matrix(vocab,d_model=512):
-    embed=Embeddings(d_model, vocab)#.to('cuda')
     x=torch.IntTensor(range(vocab))#.to('cuda')
     
-    return(embed.forward(x))
+    embed=nn.Embedding(vocab, d_model)(x)*math.sqrt(d_model)
+    
+    return embed
     
 
 def probs_to_weighted_embedding(probs,embeddings):
     
     probs=torch.transpose(probs,0,1)#.to('cuda')
     
-    embeddings=normalize(embeddings)   
+    embeddings, temp=normalize(embeddings)   
     
     weighted=probs*embeddings
     
@@ -1679,7 +1680,8 @@ def create_dataloaders(
         train_iter
     )  # DistributedSampler needs a dataset len()
     
-    test_index=1
+    #index 11 messes up the translation and it would be interesting to look at the attention weights to try to understand why
+    test_index=14
     train_sampler = (
         DistributedSampler(train_iter_map) if is_distributed else [test_index]
     )
@@ -1966,16 +1968,17 @@ def check_outputs(
     pad_idx=2,
     eos_string="</s>",
     mute_index=None,
-    orig_output=None
+    orig_output=None,
+    vocab_embedding=None
 ):
-    vocab_embedding=get_full_embedding_matrix(len(vocab_tgt))
+    
 
     results = [()] * n_examples
     for idx in range(n_examples):
         print("\nExample",mute_index,"========\n" )
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
-        greedy_decode(model, rb.src, rb.src_mask, 64, 0,orig_output=orig_output)[0]
+        greedy_decode(model, rb.src, rb.src_mask, 64, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)[0]
 
         src_tokens = [
             vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
@@ -1995,7 +1998,7 @@ def check_outputs(
             "Target Text (Ground Truth) : "
             ,tgt_tokens
         )
-        model_out,prob_vector, weighted_embeddings = greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)
+        model_out,prob_vector, weighted_embeddings= greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)
         
         
         model_out=model_out[0]
@@ -2007,11 +2010,13 @@ def check_outputs(
         )
         print("Model Output               : " + model_txt.replace("\n", ""))
         results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
+        
+
     return results, prob_vector, weighted_embeddings
 
-def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None):
+def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None):
         print("Loading Trained Model ...")
-        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index)
+        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0)
         # model=model.to('cuda')
         model.load_state_dict(
             torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
@@ -2021,10 +2026,12 @@ def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None)
         
         print("Checking Model Outputs:")
         example_data, prob_vector, weighted_embeddings = check_outputs(
-            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output
+            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding
         )
         # gc.collect()
         # torch.cuda.empty_cache()
+        
+
         
         return model, example_data, prob_vector, weighted_embeddings
     
@@ -2050,13 +2057,14 @@ def get_word_list(valid_dataloader,vocab, target=1):
     ]
     return tokens
 
-def normalize(A,dim=1):
-    A_min=A.min(dim=1, keepdim=True)[0]
-    A -= A_min
-    A_sum=torch.sum(A,dim=1, keepdim=True)
+def normalize(A,dim=1, some_are_negative=1):
+    if some_are_negative==1:
+        A_min=A.min(dim=dim, keepdim=True)[0]
+        A -= A_min
+    A_sum=torch.sum(A,dim=dim, keepdim=True)
     A /= A_sum
     
-    return A
+    return A, A_sum
 
 def run_model_example(n_examples=5):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
@@ -2073,11 +2081,13 @@ def run_model_example(n_examples=5):
     )
     #this part
     n_source_tokens=get_n_source_tokens(valid_dataloader)
-    model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples)
+    vocab_embedding=get_full_embedding_matrix(len(vocab_tgt))
+    model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples,vocab_embedding=vocab_embedding)
+
     orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
     orig_output=example_data[0][3]
     for mute_index in range(n_source_tokens):
-        model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output)
+        model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding)
         prob_diff_vector=prob_vector-orig_prob_vector
         if mute_index==0:
             prob_tensor=prob_diff_vector.unsqueeze(0)
@@ -2101,11 +2111,15 @@ def run_model_example(n_examples=5):
         if append_word=='</s>':
             break
         
+    distance_matrix,total_vector=normalize(distance_matrix,dim=0)
+    distance_matrix=100*distance_matrix
     for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
+        print('\n')
+        print('total importance: ',float(total_vector[0][model_output_index-1]))
         print()
         for source_index, source_word in enumerate(source_words):
         
-            print(source_word,':',model_output_word,':',float(distance_matrix[source_index][model_output_index-1]))
+            print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index-1]),0))
         
         
     #note the model_output_words doesn't predict the probability of a sentence start, which is why we shift the index by 1 here and in the print statement
