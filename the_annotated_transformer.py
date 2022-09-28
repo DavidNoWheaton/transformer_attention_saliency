@@ -1387,6 +1387,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
     if weighted_embeddings is not None:
         print(weighted_embeddings.shape)
         print(prob_vector.shape)
+
         
     return ys, prob_vector, weighted_embeddings
 
@@ -2089,7 +2090,6 @@ def run_model_example(n_examples=5):
         orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
         
         orig_output=example_data[0][3]
-        print('showing gpu utilization')
     
         for mute_index in range(n_source_tokens):
             model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding)
@@ -2120,13 +2120,14 @@ def run_model_example(n_examples=5):
             
         distance_matrix,total_vector=normalize(distance_matrix,dim=0)
         distance_matrix=100*distance_matrix
-        for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
+        
+        for model_output_index, model_output_word in enumerate(model_output_words[1:]):
             print('\n')
-            print('total importance: ',float(total_vector[0][model_output_index-1]))
+            print('total importance: ',float(total_vector[0][model_output_index]))
             print()
             for source_index, source_word in enumerate(source_words):
             
-                print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index-1]),0))
+                print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index]),0))
 
 #open code here executes the inference
 execute_example(run_model_example,args=[1])
