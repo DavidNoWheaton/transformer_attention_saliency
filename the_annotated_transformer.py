@@ -171,6 +171,17 @@ class DummyScheduler:
         None
 
 
+class ScoringDropout(nn.Module):
+    def __init__(self,dropout_rate):
+        super(ScoringDropout, self).__init__()
+        self.dropout_rate=dropout_rate
+        
+    def forward(self,input_tensor):
+        # print('ran forward!')
+        return (1-self.dropout_rate)*input_tensor
+        
+        
+
 # %% [markdown] id="jx49WRyfTsp-"
 # > My comments are blockquoted. The main text is all from the paper itself.
 
@@ -347,13 +358,18 @@ class SublayerConnection(nn.Module):
     Note for code simplicity the norm is first as opposed to last.
     """
 
-    def __init__(self, size, dropout):
+    def __init__(self, size, dropout,scoring=False):
         super(SublayerConnection, self).__init__()
         self.norm = LayerNorm(size)
-        self.dropout = nn.Dropout(dropout)
+        if scoring==False:
+            self.dropout = nn.Dropout(dropout)
+        else:
+            self.dropout=ScoringDropout(dropout)
+        
 
     def forward(self, x, sublayer):
         "Apply residual connection to any sublayer with the same size."
+        
         return x + self.dropout(sublayer(self.norm(x)))
 
 
@@ -367,11 +383,11 @@ class SublayerConnection(nn.Module):
 class EncoderLayer(nn.Module):
     "Encoder is made up of self-attn and feed forward (defined below)"
 
-    def __init__(self, size, self_attn, feed_forward, dropout):
+    def __init__(self, size, self_attn, feed_forward, dropout,scoring=False):
         super(EncoderLayer, self).__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 2)
+        self.sublayer = clones(SublayerConnection(size, dropout,scoring=scoring), 2)
         self.size = size
 
     def forward(self, x, mask):
@@ -413,13 +429,13 @@ class Decoder(nn.Module):
 class DecoderLayer(nn.Module):
     "Decoder is made of self-attn, src-attn, and feed forward (defined below)"
 
-    def __init__(self, size, self_attn, src_attn, feed_forward, dropout):
+    def __init__(self, size, self_attn, src_attn, feed_forward, dropout,scoring=False):
         super(DecoderLayer, self).__init__()
         self.size = size
         self.self_attn = self_attn
         self.src_attn = src_attn
         self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 3)
+        self.sublayer = clones(SublayerConnection(size, dropout,scoring=scoring), 3)
 
     def forward(self, x, memory, src_mask, tgt_mask):
         "Follow Figure 1 (right) for connections."
@@ -610,7 +626,7 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
 
 # %% id="D2LBMKCQTsqH"
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_model, dropout=0,verbose=0, mute_index=None, self_attention=1):
+    def __init__(self, h, d_model, dropout=0.1,verbose=0, mute_index=None, self_attention=1,scoring=False):
         "Take in model size and number of heads."
         super(MultiHeadedAttention, self).__init__()
         assert d_model % h == 0
@@ -619,7 +635,10 @@ class MultiHeadedAttention(nn.Module):
         self.h = h
         self.linears = clones(nn.Linear(d_model, d_model), 4)
         self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
+        if scoring==False:
+            self.dropout = nn.Dropout(p=dropout)
+        else:
+            self.dropout=ScoringDropout(dropout)
         self.verbose=verbose
         self.mute_index=mute_index
         self.self_attention=self_attention
@@ -703,11 +722,14 @@ class MultiHeadedAttention(nn.Module):
 class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
 
-    def __init__(self, d_model, d_ff, dropout=0):
+    def __init__(self, d_model, d_ff, dropout=0.1,scoring=False):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = nn.Linear(d_model, d_ff)
         self.w_2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
+        if scoring==False:
+            self.dropout = nn.Dropout(dropout)
+        else:
+            self.dropout=ScoringDropout(dropout)
 
     def forward(self, x):
         return self.w_2(self.dropout(self.w_1(x).relu()))
@@ -774,9 +796,12 @@ class Embeddings(nn.Module):
 class PositionalEncoding(nn.Module):
     "Implement the PE function."
 
-    def __init__(self, d_model, dropout, max_len=5000):
+    def __init__(self, d_model, dropout, max_len=5000,scoring=False):
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+        if scoring==False:
+            self.dropout = nn.Dropout(p=dropout)
+        else:
+            self.dropout=ScoringDropout(dropout)
 
         # Compute the positional encodings once in log space.
         pe = torch.zeros(max_len, d_model)
@@ -846,18 +871,18 @@ def example_positional():
 
 # %% id="mPe1ES0UTsqI"
 def make_model(
-    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0, mute_index=None
+    src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1, mute_index=None,scoring=False
 ):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
-    encoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0,self_attention=1, mute_index=mute_index)
-    decoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=None,self_attention=1)
-    decoder_source_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=mute_index,self_attention=0)
-    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
-    position = PositionalEncoding(d_model, dropout)
+    encoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0,self_attention=1, mute_index=mute_index,scoring=scoring)
+    decoder_self_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=None,self_attention=1,scoring=scoring)
+    decoder_source_attention = MultiHeadedAttention(h, d_model,verbose=0, mute_index=mute_index,self_attention=0,scoring=scoring)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout,scoring=scoring)
+    position = PositionalEncoding(d_model, dropout,scoring=scoring)
     model = EncoderDecoder(
-        Encoder(EncoderLayer(d_model, c(encoder_self_attention), c(ff), dropout), N),
-        Decoder(DecoderLayer(d_model, c(decoder_self_attention), c(decoder_source_attention), c(ff), dropout), N),
+        Encoder(EncoderLayer(d_model, c(encoder_self_attention), c(ff), dropout,scoring=scoring), N),
+        Decoder(DecoderLayer(d_model, c(decoder_self_attention), c(decoder_source_attention), c(ff), dropout,scoring=scoring), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
         Generator(d_model, tgt_vocab),
@@ -2015,7 +2040,7 @@ def check_outputs(
 
 def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None):
         print("Loading Trained Model ...")
-        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0)
+        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0.1, scoring=True)
         model=model.to('cuda')
         model.load_state_dict(
             torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
