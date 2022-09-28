@@ -129,7 +129,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+import gc
 
 # Set to False to skip notebook execution (e.g. for debugging)
 warnings.filterwarnings("ignore")
@@ -1353,8 +1353,6 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
         
-        
-        
         if orig_output is None:
             ys = torch.cat(
                 [ys, torch.zeros(1, 1).type_as(src.data).fill_(next_word)], dim=1
@@ -1384,9 +1382,7 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
                 else:
                     weighted_embeddings=torch.cat((weighted_embeddings,weighted_embedding.unsqueeze(0)))
             else:
-                weighted_embeddings=None
-            
-            
+                weighted_embeddings=None         
                     
     if weighted_embeddings is not None:
         print(weighted_embeddings.shape)
@@ -1549,12 +1545,14 @@ def get_full_embedding_matrix(vocab,d_model=512):
     
     embed=nn.Embedding(vocab, d_model)(x)*math.sqrt(d_model)
     
+    embed=embed.to('cuda')
+    
     return embed
     
 
 def probs_to_weighted_embedding(probs,embeddings):
     
-    probs=torch.transpose(probs,0,1)#.to('cuda')
+    probs=torch.transpose(probs,0,1).to('cuda')
     
     embeddings, temp=normalize(embeddings)   
     
@@ -2017,7 +2015,7 @@ def check_outputs(
 def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None):
         print("Loading Trained Model ...")
         model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0)
-        # model=model.to('cuda')
+        model=model.to('cuda')
         model.load_state_dict(
             torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
         )
@@ -2028,6 +2026,9 @@ def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None,
         example_data, prob_vector, weighted_embeddings = check_outputs(
             valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding
         )
+        # model.cpu()
+        # prob_vector.cpu()
+        # weighted_embeddings.cpu()
         # gc.collect()
         # torch.cuda.empty_cache()
         
@@ -2071,7 +2072,7 @@ def run_model_example(n_examples=5):
 
     print("Preparing Data ...")
     _, valid_dataloader = create_dataloaders(
-        torch.device("cpu"),
+        torch.device("cuda"),
         vocab_src,
         vocab_tgt,
         spacy_de,
@@ -2082,57 +2083,54 @@ def run_model_example(n_examples=5):
     #this part
     n_source_tokens=get_n_source_tokens(valid_dataloader)
     vocab_embedding=get_full_embedding_matrix(len(vocab_tgt))
-    model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples,vocab_embedding=vocab_embedding)
 
-    orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
-    orig_output=example_data[0][3]
-    for mute_index in range(n_source_tokens):
-        model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding)
-        prob_diff_vector=prob_vector-orig_prob_vector
-        if mute_index==0:
-            prob_tensor=prob_diff_vector.unsqueeze(0)
-            weighted_embedding_tensor=weighted_embeddings.unsqueeze(0)-orig_weighted_embeddings
-            print('weighted tensor: ',weighted_embedding_tensor.shape)
-        else:
-            prob_tensor=torch.cat((prob_tensor,prob_diff_vector.unsqueeze(0)),dim=0)
-            weighted_embedding_tensor=torch.cat((weighted_embedding_tensor,weighted_embeddings.unsqueeze(0)-orig_weighted_embeddings),dim=0)
-            print('weighted tensor: ',weighted_embedding_tensor.shape)
+    with torch.no_grad():
+        model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples,vocab_embedding=vocab_embedding)
+        orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
+        
+        orig_output=example_data[0][3]
+        print('showing gpu utilization')
+    
+        for mute_index in range(n_source_tokens):
+            model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding)
+            torch.cuda.empty_cache()
+            weighted_embeddings=weighted_embeddings.unsqueeze(0)
+            if mute_index==0:
+                weighted_embedding_tensor=weighted_embeddings-orig_weighted_embeddings
+                print('weighted tensor: ',weighted_embedding_tensor.shape) 
+            else:
+                weighted_embedding_tensor=torch.cat((weighted_embedding_tensor,weighted_embeddings-orig_weighted_embeddings),dim=0)
+                print('weighted tensor: ',weighted_embedding_tensor.shape)
+            del model, example_data, prob_vector
+            torch.cuda.empty_cache()    
+            gc.collect()
+        
+        difference_tensor=weighted_embedding_tensor#-orig_weighted_embeddings
+        
+        distance_matrix=torch.squeeze(torch.linalg.norm(difference_tensor,dim=2))    
+        
+        source_words=get_word_list(valid_dataloader,vocab_src,target=0)
+        model_output_words=[]
+        for i in orig_output:
             
-    difference_tensor=weighted_embedding_tensor#-orig_weighted_embeddings
-    
-    distance_matrix=torch.squeeze(torch.linalg.norm(difference_tensor,dim=2))    
-    
-    source_words=get_word_list(valid_dataloader,vocab_src,target=0)
-    model_output_words=[]
-    for i in orig_output:
-        
-        append_word=vocab_tgt.get_itos()[int(i)]
-        model_output_words.append(append_word)
-        if append_word=='</s>':
-            break
-        
-    distance_matrix,total_vector=normalize(distance_matrix,dim=0)
-    distance_matrix=100*distance_matrix
-    for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
-        print('\n')
-        print('total importance: ',float(total_vector[0][model_output_index-1]))
-        print()
-        for source_index, source_word in enumerate(source_words):
-        
-            print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index-1]),0))
-        
-        
-    #note the model_output_words doesn't predict the probability of a sentence start, which is why we shift the index by 1 here and in the print statement
-    # for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
-    #     print()
-    #     for source_index, source_word in enumerate(source_words):
-        
-    #         print(source_word,':',model_output_word,':',float(prob_tensor[source_index][model_output_index-1]))
-    
-    return model, example_data
+            append_word=vocab_tgt.get_itos()[int(i)]
+            model_output_words.append(append_word)
+            if append_word=='</s>':
+                break
+            
+        distance_matrix,total_vector=normalize(distance_matrix,dim=0)
+        distance_matrix=100*distance_matrix
+        for model_output_index, model_output_word in enumerate(model_output_words[:-1]):
+            print('\n')
+            print('total importance: ',float(total_vector[0][model_output_index-1]))
+            print()
+            for source_index, source_word in enumerate(source_words):
+            
+                print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index-1]),0))
 
 #open code here executes the inference
 execute_example(run_model_example,args=[1])
+
 
 
 # %% [markdown] id="0ZkkNTKLTsqO"
