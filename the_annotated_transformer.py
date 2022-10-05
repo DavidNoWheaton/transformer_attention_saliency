@@ -541,10 +541,15 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
         
     if mute_index is not None:
+        start_mean=torch.mean(scores)
+        # print('start mean: ',type(start_mean),start_mean)
         delta=torch.std(scores)
         scores[:,:,:,mute_index]-=delta
         if self_attention==1:
             scores[:,:,mute_index,:]-=delta
+            
+        end_mean=torch.mean(scores)
+        scores=scores+start_mean-end_mean
             
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
