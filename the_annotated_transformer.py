@@ -2149,16 +2149,10 @@ def run_model_example(n_examples=5):
                 break
             
         distance_matrix,total_vector=normalize(distance_matrix,dim=0)
-        distance_matrix=100*distance_matrix
+        distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
         
-        for model_output_index, model_output_word in enumerate(model_output_words[1:]):
-            print('\n')
-            print('total importance: ',float(total_vector[0][model_output_index]))
-            print()
-            for source_index, source_word in enumerate(source_words):
-            
-                print(source_word,':',model_output_word,':',round(float(distance_matrix[source_index][model_output_index]),0))
-
+        px = pd.DataFrame(distance_matrix.cpu().numpy(),columns=model_output_words[1:],index=source_words)
+        print(px.to_string())
 #open code here executes the inference
 execute_example(run_model_example,args=[1])
 
