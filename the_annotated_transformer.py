@@ -130,6 +130,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import gc
+import matplotlib.pyplot as plt
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 # Set to False to skip notebook execution (e.g. for debugging)
 warnings.filterwarnings("ignore")
@@ -2005,11 +2007,15 @@ def check_outputs(
         # print("\nExample",mute_index,"========\n" )
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
-        if mute_index is not None and method=='delete':
+
+        if mute_index is not None and method != 'downweight':
             rb_src_mod=copy.deepcopy(rb.src)
-            for index, value in enumerate(rb_src_mod[0]):
-                if mute_index<=index<len(rb_src_mod[0])-1:
+            if method=='delete':
+                for index in range(mute_index,len(rb_src_mod[0])-1):
                     rb_src_mod[0][index]=rb_src_mod[0][index+1]
+            elif method=='blank':
+
+                rb_src_mod[0][mute_index]=vocab_src.get_stoi()['<blank>']
         else:
             rb_src_mod=rb.src
                     
@@ -2052,7 +2058,7 @@ def check_outputs(
 
 def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None,method="downweight"):
         # print("Loading Trained Model ...")
-        if method=="delete":
+        if method != 'downweight':
             model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=None,dropout=0.1, scoring=True)
         else:
             model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0.1, scoring=True)
@@ -2158,21 +2164,38 @@ def run_model_example(n_examples=5,method="downweight"):
             if append_word=='</s>':
                 break
             
-        # distance_matrix,total_vector=normalize(distance_matrix,dim=0)
-        # distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
+        distance_matrix,total_vector=normalize(distance_matrix,dim=0)
+        distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
         
         px = pd.DataFrame(distance_matrix.cpu().numpy(),columns=model_output_words[1:],index=source_words)
         print(px.to_string())
-        print('distance matrix:',distance_matrix)
+        # print('distance matrix:',distance_matrix)
         return distance_matrix
 #open code here executes the inference
-distance_matrix1=run_model_example(1,method='downweight')
-distance_matrix2=run_model_example(1,method='delete')
+distance_matrix_blank=run_model_example(1,method='blank')
+distance_matrix_downweight=run_model_example(1,method='downweight')
+distance_matrix_delete=run_model_example(1,method='delete')
 
-shape=distance_matrix1.shape
-for i in range(shape[0]):
-    for j in range(shape[1]):
-        print(distance_matrix1[i,j],':',distance_matrix2[i,j])
+def tensor_to_list(pytorch_tensor):
+    return list(pytorch_tensor.cpu().numpy().flatten())
+
+blank_list=tensor_to_list(distance_matrix_blank)
+downweight_list=tensor_to_list(distance_matrix_downweight)
+delete_list=tensor_to_list(distance_matrix_delete)
+plt.scatter(blank_list,downweight_list)
+plt.show()
+plt.scatter(blank_list,delete_list)
+plt.show()
+plt.scatter(delete_list,downweight_list)
+plt.show()
+
+
+
+
+# shape=distance_matrix1.shape
+# for i in range(shape[0]):
+#     for j in range(shape[1]):
+#         print(distance_matrix1[i,j],':',distance_matrix2[i,j])
 
 
 
