@@ -544,9 +544,10 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
         start_mean=torch.mean(scores)
         # print('start mean: ',type(start_mean),start_mean)
         delta=torch.std(scores)
-        scores[:,:,:,mute_index]-=delta
+        min_score=-1e9
+        scores[:,:,:,mute_index]=min_score
         if self_attention==1:
-            scores[:,:,mute_index,:]-=delta
+            scores[:,:,mute_index,:]=min_score
             
         end_mean=torch.mean(scores)
         scores=scores+start_mean-end_mean
@@ -1413,10 +1414,6 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol, forced_output=Non
                     weighted_embeddings=torch.cat((weighted_embeddings,weighted_embedding.unsqueeze(0)))
             else:
                 weighted_embeddings=None         
-                    
-    if weighted_embeddings is not None:
-        print(weighted_embeddings.shape)
-        print(prob_vector.shape)
 
         
     return ys, prob_vector, weighted_embeddings
@@ -1998,36 +1995,46 @@ def check_outputs(
     eos_string="</s>",
     mute_index=None,
     orig_output=None,
-    vocab_embedding=None
+    vocab_embedding=None,
+    method="downweight"
 ):
     
 
     results = [()] * n_examples
     for idx in range(n_examples):
-        print("\nExample",mute_index,"========\n" )
+        # print("\nExample",mute_index,"========\n" )
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
-        greedy_decode(model, rb.src, rb.src_mask, 64, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)[0]
+        if mute_index is not None and method=='delete':
+            rb_src_mod=copy.deepcopy(rb.src)
+            for index, value in enumerate(rb_src_mod[0]):
+                if mute_index<=index<len(rb_src_mod[0])-1:
+                    rb_src_mod[0][index]=rb_src_mod[0][index+1]
+        else:
+            rb_src_mod=rb.src
+                    
+        
+        greedy_decode(model, rb_src_mod, rb.src_mask, 64, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)[0]
 
         src_tokens = [
-            vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
+            vocab_src.get_itos()[x] for x in rb_src_mod[0] if x != pad_idx
         ]
         tgt_tokens = [
             vocab_tgt.get_itos()[x] for x in rb.tgt[0] if x != pad_idx
         ]
-        if mute_index is not None:
-            print('changed ',src_tokens[mute_index])
-        else:
-            print('original')
-        print(
-            "Source Text (Input)        : "
-            ,src_tokens
-        )
-        print(
-            "Target Text (Ground Truth) : "
-            ,tgt_tokens
-        )
-        model_out,prob_vector, weighted_embeddings= greedy_decode(model, rb.src, rb.src_mask, 72, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)
+        # if mute_index is not None:
+        #     print('changed ',src_tokens[mute_index])
+        # else:
+        #     print('original')
+        # print(
+        #     "Source Text (Input)        : "
+        #     ,src_tokens
+        # )
+        # print(
+        #     "Target Text (Ground Truth) : "
+        #     ,tgt_tokens
+        # )
+        model_out,prob_vector, weighted_embeddings= greedy_decode(model, rb_src_mod, rb.src_mask, 72, 0,orig_output=orig_output,vocab_embedding=vocab_embedding)
         
         
         model_out=model_out[0]
@@ -2037,15 +2044,18 @@ def check_outputs(
             ).split(eos_string, 1)[0]
             + eos_string
         )
-        print("Model Output               : " + model_txt.replace("\n", ""))
+        # print("Model Output               : " + model_txt.replace("\n", ""))
         results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
         
 
     return results, prob_vector, weighted_embeddings
 
-def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None):
-        print("Loading Trained Model ...")
-        model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0.1, scoring=True)
+def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None,method="downweight"):
+        # print("Loading Trained Model ...")
+        if method=="delete":
+            model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=None,dropout=0.1, scoring=True)
+        else:
+            model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0.1, scoring=True)
         model=model.to('cuda')
         model.load_state_dict(
             torch.load(r"C:\Users\David\OneDrive\Documents\ml_study\Transformers\Code\interpretability_tool\annotated-transformer\multi30k_model_05.pt", map_location=torch.device("cuda"))
@@ -2053,9 +2063,9 @@ def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None,
         
 
         
-        print("Checking Model Outputs:")
+        # print("Checking Model Outputs:")
         example_data, prob_vector, weighted_embeddings = check_outputs(
-            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding
+            valid_dataloader, model, vocab_src, vocab_tgt, n_examples=n_examples, mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding,method=method
         )
         # model.cpu()
         # prob_vector.cpu()
@@ -2098,7 +2108,7 @@ def normalize(A,dim=1, some_are_negative=1):
     
     return A, A_sum
 
-def run_model_example(n_examples=5):
+def run_model_example(n_examples=5,method="downweight"):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
 
     print("Preparing Data ...")
@@ -2116,21 +2126,21 @@ def run_model_example(n_examples=5):
     vocab_embedding=get_full_embedding_matrix(len(vocab_tgt))
 
     with torch.no_grad():
-        model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples,vocab_embedding=vocab_embedding)
+        model, example_data, orig_prob_vector, orig_weighted_embeddings=run_model_iter(valid_dataloader,n_examples,vocab_embedding=vocab_embedding,method=method)
         orig_weighted_embeddings=orig_weighted_embeddings.unsqueeze(0)
         
         orig_output=example_data[0][3]
     
         for mute_index in range(n_source_tokens):
-            model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding)
+            model, example_data, prob_vector, weighted_embeddings=run_model_iter(valid_dataloader,n_examples,mute_index=mute_index,orig_output=orig_output, vocab_embedding=vocab_embedding,method=method)
             torch.cuda.empty_cache()
             weighted_embeddings=weighted_embeddings.unsqueeze(0)
             if mute_index==0:
                 weighted_embedding_tensor=weighted_embeddings-orig_weighted_embeddings
-                print('weighted tensor: ',weighted_embedding_tensor.shape) 
+                # print('weighted tensor: ',weighted_embedding_tensor.shape) 
             else:
                 weighted_embedding_tensor=torch.cat((weighted_embedding_tensor,weighted_embeddings-orig_weighted_embeddings),dim=0)
-                print('weighted tensor: ',weighted_embedding_tensor.shape)
+                # print('weighted tensor: ',weighted_embedding_tensor.shape)
             del model, example_data, prob_vector
             torch.cuda.empty_cache()    
             gc.collect()
@@ -2148,13 +2158,21 @@ def run_model_example(n_examples=5):
             if append_word=='</s>':
                 break
             
-        distance_matrix,total_vector=normalize(distance_matrix,dim=0)
-        distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
+        # distance_matrix,total_vector=normalize(distance_matrix,dim=0)
+        # distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
         
         px = pd.DataFrame(distance_matrix.cpu().numpy(),columns=model_output_words[1:],index=source_words)
         print(px.to_string())
+        print('distance matrix:',distance_matrix)
+        return distance_matrix
 #open code here executes the inference
-execute_example(run_model_example,args=[1])
+distance_matrix1=run_model_example(1,method='downweight')
+distance_matrix2=run_model_example(1,method='delete')
+
+shape=distance_matrix1.shape
+for i in range(shape[0]):
+    for j in range(shape[1]):
+        print(distance_matrix1[i,j],':',distance_matrix2[i,j])
 
 
 
