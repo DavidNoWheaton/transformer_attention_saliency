@@ -1679,6 +1679,7 @@ def create_dataloaders(
     spacy_en,
     batch_size=12000,
     max_padding=128,
+    test_index=1,
     is_distributed=True,
 ):
     # def create_dataloaders(batch_size=12000):
@@ -1708,8 +1709,7 @@ def create_dataloaders(
         train_iter
     )  # DistributedSampler needs a dataset len()
     
-    #index 11 messes up the translation and it would be interesting to look at the attention weights to try to understand why
-    test_index=14
+
     train_sampler = (
         DistributedSampler(train_iter_map) if is_distributed else [test_index]
     )
@@ -2114,7 +2114,7 @@ def normalize(A,dim=1, some_are_negative=1):
     
     return A, A_sum
 
-def run_model_example(n_examples=5,method="downweight"):
+def run_model_example(n_examples=5,method="downweight",test_index=1):
     global vocab_src, vocab_tgt, spacy_de, spacy_en
 
     print("Preparing Data ...")
@@ -2125,6 +2125,8 @@ def run_model_example(n_examples=5,method="downweight"):
         spacy_de,
         spacy_en,
         batch_size=1,
+        #index 11 messes up the translation and it would be interesting to look at the attention weights to try to understand why
+        test_index=test_index,
         is_distributed=False,
     )
     #this part
@@ -2163,7 +2165,7 @@ def run_model_example(n_examples=5,method="downweight"):
             model_output_words.append(append_word)
             if append_word=='</s>':
                 break
-            
+        
         distance_matrix,total_vector=normalize(distance_matrix,dim=0)
         distance_matrix=torch.round(100*distance_matrix,decimals=1).int()
         
@@ -2171,23 +2173,41 @@ def run_model_example(n_examples=5,method="downweight"):
         print(px.to_string())
         # print('distance matrix:',distance_matrix)
         return distance_matrix
-#open code here executes the inference
-distance_matrix_blank=run_model_example(1,method='blank')
-distance_matrix_downweight=run_model_example(1,method='downweight')
-distance_matrix_delete=run_model_example(1,method='delete')
 
 def tensor_to_list(pytorch_tensor):
+    print('orig shape:',pytorch_tensor.shape)
+    pytorch_tensor=pytorch_tensor[1:-1,:-1]
+    print('final shape: ',pytorch_tensor.shape)
     return list(pytorch_tensor.cpu().numpy().flatten())
 
-blank_list=tensor_to_list(distance_matrix_blank)
-downweight_list=tensor_to_list(distance_matrix_downweight)
-delete_list=tensor_to_list(distance_matrix_delete)
+from scipy.stats import pearsonr
+blank_list=[]
+downweight_list=[]
+delete_list=[]
+for test_index in range(50,100):
+    #open code here executes the inference
+    distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
+    distance_matrix_downweight=run_model_example(1,method='downweight',test_index=test_index)
+    distance_matrix_delete=run_model_example(1,method='delete',test_index=test_index)
+
+    blank_list+=tensor_to_list(distance_matrix_blank)
+    downweight_list+=tensor_to_list(distance_matrix_downweight)
+    delete_list+=tensor_to_list(distance_matrix_delete)
+
+print('blank vs. downweight',pearsonr(blank_list,downweight_list)[0]**2)
 plt.scatter(blank_list,downweight_list)
 plt.show()
+
+print('blank vs. delete',pearsonr(blank_list,delete_list)[0]**2)
 plt.scatter(blank_list,delete_list)
 plt.show()
+
+print('delete vs. downweight',pearsonr(delete_list,downweight_list)[0]**2)
 plt.scatter(delete_list,downweight_list)
 plt.show()
+
+# for index in range(len(blank_list)):
+#     print(blank_list[index],':',downweight_list[index],':',delete_list[index])
 
 
 
