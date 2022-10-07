@@ -171,17 +171,6 @@ class DummyOptimizer(torch.optim.Optimizer):
 class DummyScheduler:
     def step(self):
         None
-
-
-class ScoringDropout(nn.Module):
-    def __init__(self,dropout_rate):
-        super(ScoringDropout, self).__init__()
-        self.dropout_rate=dropout_rate
-        
-    def forward(self,input_tensor):
-        # print('ran forward!')
-        return (1-self.dropout_rate)*input_tensor
-        
         
 
 # %% [markdown] id="jx49WRyfTsp-"
@@ -363,10 +352,7 @@ class SublayerConnection(nn.Module):
     def __init__(self, size, dropout,scoring=False):
         super(SublayerConnection, self).__init__()
         self.norm = LayerNorm(size)
-        if scoring==False:
-            self.dropout = nn.Dropout(dropout)
-        else:
-            self.dropout=ScoringDropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         
 
     def forward(self, x, sublayer):
@@ -644,10 +630,7 @@ class MultiHeadedAttention(nn.Module):
         self.h = h
         self.linears = clones(nn.Linear(d_model, d_model), 4)
         self.attn = None
-        if scoring==False:
-            self.dropout = nn.Dropout(p=dropout)
-        else:
-            self.dropout=ScoringDropout(dropout)
+        self.dropout = nn.Dropout(p=dropout)
         self.verbose=verbose
         self.mute_index=mute_index
         self.self_attention=self_attention
@@ -735,10 +718,7 @@ class PositionwiseFeedForward(nn.Module):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = nn.Linear(d_model, d_ff)
         self.w_2 = nn.Linear(d_ff, d_model)
-        if scoring==False:
-            self.dropout = nn.Dropout(dropout)
-        else:
-            self.dropout=ScoringDropout(dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         return self.w_2(self.dropout(self.w_1(x).relu()))
@@ -807,10 +787,7 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model, dropout, max_len=5000,scoring=False):
         super(PositionalEncoding, self).__init__()
-        if scoring==False:
-            self.dropout = nn.Dropout(p=dropout)
-        else:
-            self.dropout=ScoringDropout(dropout)
+        self.dropout = nn.Dropout(p=dropout)
 
         # Compute the positional encodings once in log space.
         pe = torch.zeros(max_len, d_model)
