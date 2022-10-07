@@ -549,16 +549,13 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
     
     if mute_index is not None:
         # delta=torch.std(scores)
-        start_mean=torch.mean(scores)        
         min_score=0
-        
         p_attn[:,:,:,mute_index]=min_score
-        
+        p_attn/=torch.sum(p_attn,dim=-1).unsqueeze(dim=-1)
         if self_attention==1:
-            p_attn[:,:,mute_index,:]=min_score
+           
             
-        end_mean=torch.mean(scores)
-        scores=scores+start_mean-end_mean
+            p_attn[:,:,mute_index,:]=min_score
 
 
     if dropout is not None:
@@ -2188,7 +2185,7 @@ from scipy.stats import pearsonr
 blank_list=[]
 downweight_list=[]
 delete_list=[]
-for test_index in range(50,51):
+for test_index in range(50,55):
     #open code here executes the inference
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
     distance_matrix_downweight=run_model_example(1,method='downweight',test_index=test_index)
