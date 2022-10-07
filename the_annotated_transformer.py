@@ -541,29 +541,33 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
         print('\n\n\n')
     d_k = query.size(-1)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
-        
-    if mute_index is not None:
-        start_mean=torch.mean(scores)
-        # print('start mean: ',type(start_mean),start_mean)
-        delta=torch.std(scores)
-        min_score=-1e9
-        scores[:,:,:,mute_index]=min_score
-        if self_attention==1:
-            scores[:,:,mute_index,:]=min_score
-            
-        end_mean=torch.mean(scores)
-        scores=scores+start_mean-end_mean
             
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
         
     p_attn = scores.softmax(dim=-1)
+    
+    if mute_index is not None:
+        # delta=torch.std(scores)
+        start_mean=torch.mean(scores)        
+        min_score=0
+        
+        p_attn[:,:,:,mute_index]=min_score
+        
+        if self_attention==1:
+            p_attn[:,:,mute_index,:]=min_score
+            
+        end_mean=torch.mean(scores)
+        scores=scores+start_mean-end_mean
+
 
     if dropout is not None:
         p_attn = dropout(p_attn)
 
         
     attention_matrix=torch.matmul(p_attn, value)
+
+    # print('intermediate: ',attention_matrix[0,0,0,mute_index].shape,attention_matrix[0,0,:,mute_index])
     if verbose==1:
         print('key:',query.shape)
         print('key transpose:',key.transpose(-2, -1).shape)
@@ -2013,7 +2017,7 @@ def check_outputs(
             if method=='delete':
                 for index in range(mute_index,len(rb_src_mod[0])-1):
                     rb_src_mod[0][index]=rb_src_mod[0][index+1]
-            elif method=='blank':
+            elif method in {'blank','blank_and_downweight'}:
 
                 rb_src_mod[0][mute_index]=vocab_src.get_stoi()['<blank>']
         else:
@@ -2058,7 +2062,7 @@ def check_outputs(
 
 def run_model_iter(valid_dataloader,n_examples,mute_index=None,orig_output=None, vocab_embedding=None,method="downweight"):
         # print("Loading Trained Model ...")
-        if method != 'downweight':
+        if method not in {'downweight','blank_and_downweight'}:
             model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=None,dropout=0.1, scoring=True)
         else:
             model = make_model(len(vocab_src), len(vocab_tgt), N=6,mute_index=mute_index,dropout=0.1, scoring=True)
@@ -2184,7 +2188,7 @@ from scipy.stats import pearsonr
 blank_list=[]
 downweight_list=[]
 delete_list=[]
-for test_index in range(50,100):
+for test_index in range(50,51):
     #open code here executes the inference
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
     distance_matrix_downweight=run_model_example(1,method='downweight',test_index=test_index)
@@ -2205,6 +2209,8 @@ plt.show()
 print('delete vs. downweight',pearsonr(delete_list,downweight_list)[0]**2)
 plt.scatter(delete_list,downweight_list)
 plt.show()
+
+# print(test_index)
 
 # for index in range(len(blank_list)):
 #     print(blank_list[index],':',downweight_list[index],':',delete_list[index])
