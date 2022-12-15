@@ -367,10 +367,10 @@ class SublayerConnection(nn.Module):
             self.dropout = nn.Dropout(dropout)
         else:
             self.dropout=ScoringDropout(dropout)
-        
 
     def forward(self, x, sublayer):
         "Apply residual connection to any sublayer with the same size."
+
         
         return x + self.dropout(sublayer(self.norm(x)))
 
@@ -392,8 +392,10 @@ class EncoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout,scoring=scoring), 2)
         self.size = size
 
+
     def forward(self, x, mask):
         "Follow Figure 1 (left) for connections."
+
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
         return self.sublayer[1](x, self.feed_forward)
 
@@ -552,6 +554,7 @@ def attention(query, key, value, mask=None, dropout=None, verbose=1, mute_index=
         min_score=0
         p_attn[:,:,:,mute_index]=min_score
         p_attn/=torch.sum(p_attn,dim=-1).unsqueeze(dim=-1)
+
         if self_attention==1:
            
             
@@ -2185,12 +2188,16 @@ from scipy.stats import pearsonr
 blank_list=[]
 downweight_list=[]
 delete_list=[]
+both_list=[]
 for test_index in range(50,55):
     #open code here executes the inference
+    distance_matrix_both=run_model_example(1,method='blank_and_downweight',test_index=test_index)
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
+    
     distance_matrix_downweight=run_model_example(1,method='downweight',test_index=test_index)
     distance_matrix_delete=run_model_example(1,method='delete',test_index=test_index)
 
+    both_list+=tensor_to_list(distance_matrix_both)
     blank_list+=tensor_to_list(distance_matrix_blank)
     downweight_list+=tensor_to_list(distance_matrix_downweight)
     delete_list+=tensor_to_list(distance_matrix_delete)
@@ -2207,7 +2214,11 @@ print('delete vs. downweight',pearsonr(delete_list,downweight_list)[0]**2)
 plt.scatter(delete_list,downweight_list)
 plt.show()
 
-# print(test_index)
+print('both vs. delete',pearsonr(both_list,delete_list)[0]**2)
+plt.scatter(both_list,delete_list)
+plt.show()
+
+print(test_index)
 
 # for index in range(len(blank_list)):
 #     print(blank_list[index],':',downweight_list[index],':',delete_list[index])
