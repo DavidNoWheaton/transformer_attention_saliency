@@ -131,7 +131,6 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import gc
 import matplotlib.pyplot as plt
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 # Set to False to skip notebook execution (e.g. for debugging)
 warnings.filterwarnings("ignore")
@@ -1498,7 +1497,6 @@ def load_tokenizers():
 
     try:
         spacy_de = spacy.load("de_core_news_sm")
-        print('spacy_de:',spacy_de)
     except IOError:
         os.system("python -m spacy download de_core_news_sm")
         spacy_de = spacy.load("de_core_news_sm")
@@ -2189,7 +2187,7 @@ blank_list=[]
 downweight_list=[]
 delete_list=[]
 both_list=[]
-for test_index in range(50,55):
+for test_index in range(50,51):
     #open code here executes the inference
     distance_matrix_both=run_model_example(1,method='blank_and_downweight',test_index=test_index)
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
