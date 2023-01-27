@@ -173,14 +173,14 @@ class DummyScheduler:
         None
 
 
+#for some reason, the nn.dropout module seems to be dropping out while scoring. This shouldn't happen, but I'm introducing this as a fix
 class ScoringDropout(nn.Module):
     def __init__(self,dropout_rate):
         super(ScoringDropout, self).__init__()
         self.dropout_rate=dropout_rate
         
     def forward(self,input_tensor):
-        # print('ran forward!')
-        return (1-self.dropout_rate)*input_tensor
+        return input_tensor
         
         
 
