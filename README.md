@@ -1,6 +1,6 @@
 This code is a modification of The Annotated Transformer http://nlp.seas.harvard.edu/annotated-transformer/
 
-It is an exploration of a transformer interpretability tool I used to get a better understanding of the details of the transformer framework. It implements several methods for removing the effect of a specific word in an encoder-decoder transformer architecture. These methods are: 
+It is an exploration of transformer interpretability, and a tool to improve my understanding of the details of the transformer framework. It implements several methods for removing the effect of a specific word in an encoder-decoder transformer architecture. These methods are: 
 
 1. Downweight all attention weights that involve the word
 2. Delete the word
