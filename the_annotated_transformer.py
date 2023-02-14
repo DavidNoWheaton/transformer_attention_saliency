@@ -131,6 +131,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import gc
 import matplotlib.pyplot as plt
+import random
 
 # Set to False to skip notebook execution (e.g. for debugging)
 warnings.filterwarnings("ignore")
@@ -2187,7 +2188,7 @@ blank_list=[]
 downweight_list=[]
 delete_list=[]
 both_list=[]
-for test_index in range(50,51):
+for test_index in random.sample(range(0,1014),3):
     #open code here executes the inference
     distance_matrix_both=run_model_example(1,method='blank_and_downweight',test_index=test_index)
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
