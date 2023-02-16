@@ -2188,7 +2188,7 @@ blank_list=[]
 downweight_list=[]
 delete_list=[]
 both_list=[]
-for test_index in random.sample(range(0,1014),3):
+for test_index in random.sample(range(0,1014),1):
     #open code here executes the inference
     distance_matrix_both=run_model_example(1,method='blank_and_downweight',test_index=test_index)
     distance_matrix_blank=run_model_example(1,method='blank',test_index=test_index)
@@ -2201,19 +2201,27 @@ for test_index in random.sample(range(0,1014),3):
     downweight_list+=tensor_to_list(distance_matrix_downweight)
     delete_list+=tensor_to_list(distance_matrix_delete)
 
-print('blank vs. downweight',pearsonr(blank_list,downweight_list)[0]**2)
+plt.title("Blank vs. Downweight: Pearson Correlation = "+str(pearsonr(blank_list,downweight_list)[0]**2))
+plt.xlabel("Blank")
+plt.ylabel("Downweight")
 plt.scatter(blank_list,downweight_list)
 plt.show()
 
-print('blank vs. delete',pearsonr(blank_list,delete_list)[0]**2)
+plt.title("Blank vs. Delete: Pearson Correlation = "+str(pearsonr(blank_list,delete_list)[0]**2))
+plt.xlabel("Blank")
+plt.ylabel("Delete")
 plt.scatter(blank_list,delete_list)
 plt.show()
 
-print('delete vs. downweight',pearsonr(delete_list,downweight_list)[0]**2)
+plt.title("Delete vs. Downweight: Pearson Correlation = "+str(pearsonr(delete_list,downweight_list)[0]**2))
+plt.xlabel("Delete")
+plt.ylabel("Downweight")
 plt.scatter(delete_list,downweight_list)
 plt.show()
 
-print('both vs. delete',pearsonr(both_list,delete_list)[0]**2)
+plt.title("Both vs. Delete: Pearson Correlation = "+str(pearsonr(both_list,delete_list)[0]**2))
+plt.xlabel("Both")
+plt.ylabel("Delete")
 plt.scatter(both_list,delete_list)
 plt.show()
 
